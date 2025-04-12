@@ -41,22 +41,25 @@ loss_fn = nn.MSELoss()
 # Replay memory
 memory = deque(maxlen=10000)
 batch_size = 64
-gamma = 0.99
+gamma = 0.95
 
 # Epsilon-greedy
 epsilon = 1.0
 epsilon_min = 0.01
-epsilon_decay = 0.995
+epsilon_decay = 0.995 
 
 # Training loop
-num_episodes = 1000
+num_episodes = 30000
 for episode in range(num_episodes):
     state, info = env.reset()
     total_reward = 0
 
-    for t in range(200):  # max steps per episode
+    for t in range(400):  # max steps per episode
         if random.random() < epsilon:
             action = env.action_space.sample()
+            biased_probs = [0.04, 0.04, 0.04, 0.01, 0.01, 0.01, 0.25, 0.35, 0.25]
+            action = np.random.choice(len(biased_probs), p=biased_probs)
+            
         else:
             with torch.no_grad():
                 q_values = model(torch.tensor(state, dtype=torch.float32))
@@ -93,8 +96,8 @@ for episode in range(num_episodes):
             break
 
     # Decay epsilon
-    if epsilon > epsilon_min:
-        epsilon *= epsilon_decay
+    decay_rate = 5e-4
+    epsilon = epsilon_min + (1.0 - epsilon_min) * math.exp(-decay_rate * episode)
 
     print(f"Episode {episode+1}: Total Reward = {total_reward:.2f}, Epsilon = {epsilon:.3f}")
 

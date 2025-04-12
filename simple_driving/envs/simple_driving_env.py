@@ -6,6 +6,7 @@ from pybullet_utils import bullet_client as bc
 from simple_driving.resources.car import Car
 from simple_driving.resources.plane import Plane
 from simple_driving.resources.goal import Goal
+from simple_driving.resources.deathTrap import deathTrap
 import matplotlib.pyplot as plt
 import time
 
@@ -23,8 +24,8 @@ class SimpleDrivingEnv(gym.Env):
                 low=np.array([-1, -.6], dtype=np.float32),
                 high=np.array([1, .6], dtype=np.float32))
         self.observation_space = gym.spaces.box.Box(
-            low=np.array([-40, -40], dtype=np.float32),
-            high=np.array([40, 40], dtype=np.float32))
+            low=np.array([-40, -40, -40, -40, -40, -40], dtype=np.float32),
+            high=np.array([40, 40, 40, 40, 40, 40], dtype=np.float32))
         self.np_random, _ = gym.utils.seeding.np_random()
 
         if renders:
@@ -46,6 +47,8 @@ class SimpleDrivingEnv(gym.Env):
         self.render_rot_matrix = None
         self.reset()
         self._envStepCounter = 0
+        #self.drunkDrivingIncidents = 0 unnecessary. Was going to use to tally how many obstacles hit but maybe just the car dying is good.
+        self.death_traps = []
 
     def step(self, action):
         # Feed action to the car and get observation of car's state
@@ -65,16 +68,29 @@ class SimpleDrivingEnv(gym.Env):
           goalpos, goalorn = self._p.getBasePositionAndOrientation(self.goal_object.goal)
           car_ob = self.getExtendedObservation()
 
+
+
+            # Compute reward as L2 change in distance to goal
+            # dist_to_goal = math.sqrt(((car_ob[0] - self.goal[0]) ** 2 +
+                                    # (car_ob[1] - self.goal[1]) ** 2))
+          dist_to_goal = math.sqrt(((carpos[0] - goalpos[0]) ** 2 +
+                                  (carpos[1] - goalpos[1]) ** 2))
+
+          carpos, _ = self._p.getBasePositionAndOrientation(self.car.car)
+          for trap in self.death_traps:
+              trap_pos, _ = self._p.getBasePositionAndOrientation(trap.deathTrap)
+              dist = math.sqrt((carpos[0] - trap_pos[0])**2 + (carpos[1] - trap_pos[1])**2)
+              if dist < 1.0:  # Collision threshold
+                  reward = -dist_to_goal - 100
+                  self.done = True
+                  break
+
           if self._termination():
             self.done = True
             break
           self._envStepCounter += 1
 
-        # Compute reward as L2 change in distance to goal
-        # dist_to_goal = math.sqrt(((car_ob[0] - self.goal[0]) ** 2 +
-                                  # (car_ob[1] - self.goal[1]) ** 2))
-        dist_to_goal = math.sqrt(((carpos[0] - goalpos[0]) ** 2 +
-                                  (carpos[1] - goalpos[1]) ** 2))
+        
         # reward = max(self.prev_dist_to_goal - dist_to_goal, 0)
         reward = -dist_to_goal
         self.prev_dist_to_goal = dist_to_goal
@@ -84,7 +100,9 @@ class SimpleDrivingEnv(gym.Env):
             #print("reached goal")
             self.done = True
             self.reached_goal = True
-
+        # Hip hip hooray we reached the goal +50 moolah    
+        if self.reached_goal == True:
+            reward = -dist_to_goal + 50
         ob = car_ob
         return ob, reward, self.done, dict()
 
@@ -113,6 +131,12 @@ class SimpleDrivingEnv(gym.Env):
         # Visual element of the goal
         self.goal_object = Goal(self._p, self.goal)
 
+        # Spawn 3–5 random death traps
+        trap_count = self.np_random.integers(3, 6)
+        self.spawn_death_traps(trap_count)
+
+        
+
         # Get observation to return
         carpos = self.car.get_observation()
 
@@ -120,6 +144,20 @@ class SimpleDrivingEnv(gym.Env):
                                            (carpos[1] - self.goal[1]) ** 2))
         car_ob = self.getExtendedObservation()
         return np.array(car_ob, dtype=np.float32)
+
+    def spawn_death_traps(self, count=3):
+        self.death_traps = []
+        tries = 0
+        while len(self.death_traps) < count and tries < 20:
+            x = self.np_random.uniform(-10, 10)
+            y = self.np_random.uniform(-10, 10)
+            dist_to_goal = math.sqrt((x - self.goal[0]) ** 2 + (y - self.goal[1]) ** 2)
+
+            # Ensure trap is not too close to goal
+            if dist_to_goal > 3.0:
+                trap = deathTrap(self._p, (x, y))
+                self.death_traps.append(trap)
+            tries += 1
 
     def render(self, mode='human'):
         if mode == "fp_camera":
@@ -183,7 +221,20 @@ class SimpleDrivingEnv(gym.Env):
         invCarPos, invCarOrn = self._p.invertTransform(carpos, carorn)
         goalPosInCar, goalOrnInCar = self._p.multiplyTransforms(invCarPos, invCarOrn, goalpos, goalorn)
 
-        observation = [goalPosInCar[0], goalPosInCar[1]]
+        trap_positions = []
+        for trap in self.death_traps:
+            trap_pos, trap_orn = self._p.getBasePositionAndOrientation(trap.deathTrap)
+            trap_in_car, _ = self._p.multiplyTransforms(invCarPos, invCarOrn, trap_pos, trap_orn)
+            trap_positions.append(trap_in_car)
+
+             # Sort by distance
+        trap_positions.sort(key=lambda p: math.sqrt(p[0]**2 + p[1]**2))
+
+        # Pick up to 2 closest deathtraps
+        nearestTrap = trap_positions[:2] + [(0, 0, 0)] * (2 - len(trap_positions))  # pad with dummy if < 2
+
+        observation = [goalPosInCar[0], goalPosInCar[1], nearestTrap[0][0], nearestTrap[0][1],
+           nearestTrap[1][0], nearestTrap[1][1]]
         return observation
 
     def _termination(self):

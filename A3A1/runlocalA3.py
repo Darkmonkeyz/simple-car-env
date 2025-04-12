@@ -38,7 +38,7 @@ env = env.unwrapped
 ##########################################################################################################################
 
 #load the model
-model = QNetwork(2, 9)
+model = QNetwork(6, 9)
 model.load_state_dict(torch.load("simple_driving_qlearning.pkl"))  # Load the trained model
 
 
